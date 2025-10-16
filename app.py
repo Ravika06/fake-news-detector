@@ -16,15 +16,11 @@ def call_huggingface_api(api_key, model_id, article_text):
     Calls the Hugging Face Inference API for a specific model.
     Handles model loading with retries.
     """
-    # The API URL is structured with the model's ID
     api_url = f"https://api-inference.huggingface.co/models/{model_id}"
-    
-    # We must provide the API key in the headers for authorization
     headers = {"Authorization": f"Bearer {api_key}"}
 
-    # The prompt structure is specific to the Gemma Instruct model
-    # It asks the model to act as an expert and return a structured response.
-    prompt = f"""<start_of_turn>user
+    # The prompt structure is specific to the Phi-3 Instruct model
+    prompt = f"""<|user|>
 You are an expert fact-checker and media analyst. Your role is to analyze a news article and provide a structured, unbiased assessment of its credibility in the exact format requested.
 
 Please analyze the following news article and provide your analysis in the exact format below, with each item on a new line:
@@ -34,31 +30,28 @@ Please analyze the following news article and provide your analysis in the exact
 3.  **Summary & Reasoning:** [A detailed, neutral summary explaining your verdict. Mention specific elements like sourcing, tone, and potential biases.]
 
 --- ARTICLE TEXT ---
-{article_text}<end_of_turn>
-<start_of_turn>model
+{article_text}<|end|>
+<|assistant|>
 """
 
-    # The data payload sent to the API
     payload = {
         "inputs": prompt,
         "parameters": {
-            "max_new_tokens": 300,       # Max length of the generated response
-            "return_full_text": False,   # Only return the AI's generated part
-            "temperature": 0.6,          # Controls creativity, lower is more factual
+            "max_new_tokens": 300,
+            "return_full_text": False,
+            "temperature": 0.6,
         }
     }
 
     try:
         response = requests.post(api_url, headers=headers, json=payload)
         
-        # This is a special case for Hugging Face: If the model is not "loaded",
-        # the API returns a 503 error. We wait and try again.
         if response.status_code == 503:
             st.info("The AI model is waking up, this might take up to a minute...")
-            time.sleep(25) # Wait 25 seconds for the model to load
+            time.sleep(25)
             response = requests.post(api_url, headers=headers, json=payload)
 
-        response.raise_for_status() # This will raise an exception for any other web error (like 4xx or 5xx)
+        response.raise_for_status()
         
         data = response.json()
         return data[0]['generated_text']
@@ -71,12 +64,11 @@ Please analyze the following news article and provide your analysis in the exact
         st.error(f"An unexpected error occurred: {e}")
         return None
 
-# --- Function to parse the AI response and update the UI (reused from before) ---
+# --- Function to parse the AI response and update the UI ---
 def update_ui_with_results(response_text):
     """
     Parses the structured text from the AI and updates the Streamlit UI elements.
     """
-    # Use regular expressions to find the score, verdict, and summary
     score_match = re.search(r"Credibility Score:\s*(\d+)", response_text, re.IGNORECASE)
     verdict_match = re.search(r"Verdict:\s*(.*)", response_text, re.IGNORECASE)
     summary_match = re.search(r"Summary & Reasoning:\s*([\s\S]*)", response_text, re.IGNORECASE)
@@ -103,7 +95,7 @@ def update_ui_with_results(response_text):
 
 # --- Main App Interface ---
 st.title("📰 AI-Powered Fake News Detector")
-st.markdown("This tool uses the open-source Gemma model from Hugging Face to analyze news articles.")
+st.markdown("This tool uses the open-source Phi-3 model from Hugging Face to analyze news articles.")
 
 article_text = st.text_area("Paste the full article text here:", height=250, placeholder="Enter the article content...")
 
@@ -113,11 +105,11 @@ if analyze_button:
     if not article_text.strip():
         st.warning("Please paste some article text to analyze.")
     else:
-        with st.spinner('Analyzing the article with Gemma... This may take a moment.'):
+        with st.spinner('Analyzing the article with Phi-3... This may take a moment.'):
             try:
-                # Retrieve the API key from Streamlit's secret management
                 api_key = st.secrets["HUGGINGFACE_API_KEY"]
-                model_to_use = "google/gemma-1.1-7b-it"
+                # This is a non-gated model that should work without pre-approval.
+                model_to_use = "microsoft/Phi-3-mini-4k-instruct"
                 analysis_result = call_huggingface_api(api_key, model_to_use, article_text)
                 if analysis_result:
                     update_ui_with_results(analysis_result)
