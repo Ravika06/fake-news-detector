@@ -1,5 +1,5 @@
 import streamlit as st
-import openai
+import requests
 import re
 import time
 
@@ -10,51 +10,69 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Function to call the OpenAI API ---
-def call_openai_api(api_key, article_text):
+# --- Function to call the Hugging Face Inference API ---
+def call_huggingface_api(api_key, model_id, article_text):
     """
-    Calls the OpenAI API with a specific prompt to analyze the article.
+    Calls the Hugging Face Inference API for a specific model.
+    Handles model loading with retries.
     """
+    # The API URL is structured with the model's ID
+    api_url = f"https://api-inference.huggingface.co/models/{model_id}"
+    
+    # We must provide the API key in the headers for authorization
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    # The prompt structure is specific to Llama 3 Instruct model
+    # It asks the model to act as an expert and return a structured response.
+    prompt = f"""
+    <|begin_of_text|><|start_header_id|>system<|end_header_id|>
+    You are an expert fact-checker and media analyst. Your role is to analyze a news article and provide a structured, unbiased assessment of its credibility in the exact format requested.
+    <|eot_id|><|start_header_id|>user<|end_header_id|>
+    Please analyze the following news article and provide your analysis in the exact format below, with each item on a new line:
+
+    1.  **Credibility Score:** [A numerical score from 0 (completely false) to 100 (highly credible)]
+    2.  **Verdict:** [A one-sentence conclusion, e.g., "This article appears credible," or "This article shows signs of being misinformation."]
+    3.  **Summary & Reasoning:** [A detailed, neutral summary explaining your verdict. Mention specific elements like sourcing, tone, and potential biases.]
+
+    --- ARTICLE TEXT ---
+    {article_text}
+    <|eot_id|><|start_header_id|>assistant<|end_header_id|>
+    """
+
+    # The data payload sent to the API
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 300,       # Max length of the generated response
+            "return_full_text": False,   # Only return the AI's generated part
+            "temperature": 0.6,          # Controls creativity, lower is more factual
+        }
+    }
+
     try:
-        # Initialize the OpenAI client with the API key
-        client = openai.OpenAI(api_key=api_key)
+        response = requests.post(api_url, headers=headers, json=payload)
+        
+        # This is a special case for Hugging Face: If the model is not "loaded",
+        # the API returns a 503 error. We wait and try again.
+        if response.status_code == 503:
+            st.info("The AI model is waking up, this might take up to a minute...")
+            time.sleep(25) # Wait 25 seconds for the model to load
+            response = requests.post(api_url, headers=headers, json=payload)
 
-        # The prompt is engineered to ask for a structured response
-        system_prompt = "You are an expert fact-checker and media analyst. Your role is to analyze a news article and provide a structured, unbiased assessment of its credibility."
-        user_prompt = f"""
-        Please analyze the following news article and provide your analysis in the exact format below, with each item on a new line:
+        response.raise_for_status() # This will raise an exception for any other web error (like 4xx or 5xx)
+        
+        data = response.json()
+        return data[0]['generated_text']
 
-        1.  **Credibility Score:** [A numerical score from 0 (completely false) to 100 (highly credible)]
-        2.  **Verdict:** [A one-sentence conclusion, e.g., "This article appears credible," or "This article shows signs of being misinformation."]
-        3.  **Summary & Reasoning:** [A detailed, neutral summary explaining your verdict. Mention specific elements like sourcing, tone, and potential biases.]
-
-        --- ARTICLE TEXT ---
-        {article_text}
-        """
-
-        # Make the API call to the GPT-3.5-Turbo model
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.5, # Keep the response focused and consistent
-        )
-
-        # Extract the text content from the response
-        return response.choices[0].message.content
-
-    except openai.APIError as e:
-        # Handle specific API errors (e.g., rate limits, invalid key)
-        st.error(f"An OpenAI API error occurred: {e}. This might be an issue with your API key or account.")
+    except requests.exceptions.HTTPError as e:
+        st.error(f"A web error occurred: {e}. This might be your API key or the model name.")
+        st.error(f"Response content: {e.response.text}")
         return None
     except Exception as e:
-        # Handle other potential errors (e.g., network issues)
         st.error(f"An unexpected error occurred: {e}")
         return None
 
-# --- Function to parse the AI response and update the UI ---
+# --- Function to parse the AI response and update the UI (reused from before) ---
 def update_ui_with_results(response_text):
     """
     Parses the structured text from the AI and updates the Streamlit UI elements.
@@ -69,9 +87,7 @@ def update_ui_with_results(response_text):
         verdict = verdict_match.group(1).strip()
         summary = summary_match.group(1).strip()
 
-        # Display the results in styled containers
         st.subheader("Analysis Results")
-
         st.progress(score, text=f"Credibility Score: {score}/100")
 
         if score < 40:
@@ -83,13 +99,12 @@ def update_ui_with_results(response_text):
 
         st.info(f"**Summary & Reasoning:**\n\n{summary}")
     else:
-        # If parsing fails, show the raw response for debugging
         st.warning("Could not parse the AI's response. Displaying raw output:")
         st.text(response_text)
 
 # --- Main App Interface ---
 st.title("📰 AI-Powered Fake News Detector")
-st.markdown("This tool uses the GPT-3.5-Turbo model to analyze news articles. Paste the text of an article below to get started.")
+st.markdown("This tool uses the open-source Llama 3 model from Hugging Face to analyze news articles.")
 
 article_text = st.text_area("Paste the full article text here:", height=250, placeholder="Enter the article content...")
 
@@ -99,13 +114,14 @@ if analyze_button:
     if not article_text.strip():
         st.warning("Please paste some article text to analyze.")
     else:
-        with st.spinner('Analyzing the article... This may take a moment.'):
-            # Retrieve the API key from Streamlit's secret management
+        with st.spinner('Analyzing the article with Llama 3... This may take a moment.'):
             try:
-                api_key = st.secrets["OPENAI_API_KEY"]
-                analysis_result = call_openai_api(api_key, article_text)
+                # Retrieve the API key from Streamlit's secret management
+                api_key = st.secrets["HUGGINGFACE_API_KEY"]
+                model_to_use = "meta-llama/Meta-Llama-3-8B-Instruct"
+                analysis_result = call_huggingface_api(api_key, model_to_use, article_text)
                 if analysis_result:
                     update_ui_with_results(analysis_result)
             except KeyError:
-                st.error("OpenAI API key not found. Please add it to your Streamlit secrets.")
+                st.error("Hugging Face API key not found. Please add it to your Streamlit secrets.")
 
