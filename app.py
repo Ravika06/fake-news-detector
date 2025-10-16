@@ -19,10 +19,9 @@ def call_huggingface_api(api_key, model_id, article_text):
     api_url = f"https://api-inference.huggingface.co/models/{model_id}"
     headers = {"Authorization": f"Bearer {api_key}"}
 
-    # The prompt structure is specific to the Phi-3 Instruct model
-    prompt = f"""<|user|>
-You are an expert fact-checker and media analyst. Your role is to analyze a news article and provide a structured, unbiased assessment of its credibility in the exact format requested.
-
+    # The prompt structure is specific to the Llama 3 Instruct model
+    prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+You are an expert fact-checker and media analyst. Your role is to analyze a news article and provide a structured, unbiased assessment of its credibility in the exact format requested.<|eot_id|><|start_header_id|>user<|end_header_id|>
 Please analyze the following news article and provide your analysis in the exact format below, with each item on a new line:
 
 1.  **Credibility Score:** [A numerical score from 0 (completely false) to 100 (highly credible)]
@@ -30,8 +29,7 @@ Please analyze the following news article and provide your analysis in the exact
 3.  **Summary & Reasoning:** [A detailed, neutral summary explaining your verdict. Mention specific elements like sourcing, tone, and potential biases.]
 
 --- ARTICLE TEXT ---
-{article_text}<|end|>
-<|assistant|>
+{article_text}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 """
 
     payload = {
@@ -95,7 +93,7 @@ def update_ui_with_results(response_text):
 
 # --- Main App Interface ---
 st.title("📰 AI-Powered Fake News Detector")
-st.markdown("This tool uses the open-source Phi-3 model from Hugging Face to analyze news articles.")
+st.markdown("This tool uses the open-source Llama 3 model from Hugging Face to analyze news articles.")
 
 article_text = st.text_area("Paste the full article text here:", height=250, placeholder="Enter the article content...")
 
@@ -105,11 +103,11 @@ if analyze_button:
     if not article_text.strip():
         st.warning("Please paste some article text to analyze.")
     else:
-        with st.spinner('Analyzing the article with Phi-3... This may take a moment.'):
+        with st.spinner('Analyzing the article with Llama 3... This may take a moment.'):
             try:
                 api_key = st.secrets["HUGGINGFACE_API_KEY"]
-                # This is a non-gated model that should work without pre-approval.
-                model_to_use = "microsoft/Phi-3-mini-4k-instruct"
+                # This is a gated model; you must accept terms on the HF website first.
+                model_to_use = "meta-llama/Meta-Llama-3-8B-Instruct"
                 analysis_result = call_huggingface_api(api_key, model_to_use, article_text)
                 if analysis_result:
                     update_ui_with_results(analysis_result)
