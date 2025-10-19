@@ -1,5 +1,5 @@
 import streamlit as st
-import requests
+import google.generativeai as genai
 import re
 import time
 
@@ -10,61 +10,44 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Function to call the Hugging Face Inference API ---
-def call_huggingface_api(api_key, model_id, article_text):
+# --- Function to call the Google Gemini API ---
+def call_gemini_api(api_key, article_text):
     """
-    Calls the Hugging Face Inference API for a specific model.
-    Handles model loading with retries.
+    Calls the Google Gemini API with a specific prompt to analyze the article.
     """
-    api_url = f"https://api-inference.huggingface.co/models/{model_id}"
-    headers = {"Authorization": f"Bearer {api_key}"}
-
-    # The prompt structure is specific to the Phi-3 Instruct model
-    prompt = f"""<|user|>
-You are an expert fact-checker and media analyst. Your role is to analyze a news article and provide a structured, unbiased assessment of its credibility in the exact format requested.
-
-Please analyze the following news article and provide your analysis in the exact format below, with each item on a new line:
-
-1.  **Credibility Score:** [A numerical score from 0 (completely false) to 100 (highly credible)]
-2.  **Verdict:** [A one-sentence conclusion, e.g., "This article appears credible," or "This article shows signs of being misinformation."]
-3.  **Summary & Reasoning:** [A detailed, neutral summary explaining your verdict. Mention specific elements like sourcing, tone, and potential biases.]
-
---- ARTICLE TEXT ---
-{article_text}<|end|>
-<|assistant|>
-"""
-
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 300,
-            "return_full_text": False,
-            "temperature": 0.6,
-        }
-    }
-
     try:
-        response = requests.post(api_url, headers=headers, json=payload)
+        # Configure the API key
+        genai.configure(api_key=api_key)
         
-        if response.status_code == 503:
-            st.info("The AI model is waking up, this might take up to a minute...")
-            time.sleep(25)
-            response = requests.post(api_url, headers=headers, json=payload)
-
-        response.raise_for_status()
+        # We will use  gemini-1.0-pro model
+        model = genai.GenerativeModel('gemini-1.0-pro')
         
-        data = response.json()
-        return data[0]['generated_text']
+        # The prompt is engineered to ask for a response
+        prompt = f"""
+        As an expert fact-checker and media analyst, your role is to analyze a news article and provide a structured, unbiased assessment of its credibility.
 
-    except requests.exceptions.HTTPError as e:
-        st.error(f"A web error occurred: {e}. This might be your API key or the model name.")
-        st.error(f"Response content: {e.response.text}")
-        return None
+        Please analyze the following news article and provide your analysis in the exact format below, with each item on a new line:
+
+        1.  **Credibility Score:** [A numerical score from 0 (completely false) to 100 (highly credible)]
+        2.  **Verdict:** [A one-sentence conclusion, e.g., "This article appears credible," or "This article shows signs of being misinformation."]
+        3.  **Summary & Reasoning:** [A detailed, neutral summary explaining your verdict. Mention specific elements like sourcing, tone, and potential biases.]
+
+        --- ARTICLE TEXT ---
+        {article_text}
+        """
+
+        # Make the API call
+        response = model.generate_content(prompt)
+        
+        # Extract the text content from the response
+        return response.text
+
     except Exception as e:
-        st.error(f"An unexpected error occurred: {e}")
+        # Handle potential errors 
+        st.error(f"An error occurred with the Google Gemini API: {e}")
         return None
 
-# --- Function to parse the AI response and update the UI ---
+
 def update_ui_with_results(response_text):
     """
     Parses the structured text from the AI and updates the Streamlit UI elements.
@@ -95,7 +78,7 @@ def update_ui_with_results(response_text):
 
 # --- Main App Interface ---
 st.title("📰 AI-Powered Fake News Detector")
-st.markdown("This tool uses AI to analyze news articles.")
+st.markdown("This tool uses the Google Gemini model to analyze news articles.")
 
 article_text = st.text_area("Paste the full article text here:", height=250, placeholder="Enter the article content...")
 
@@ -105,14 +88,13 @@ if analyze_button:
     if not article_text.strip():
         st.warning("Please paste some article text to analyze.")
     else:
-        with st.spinner('Analyzing the article... This may take a moment.'):
+        with st.spinner('Analyzing the article with Google Gemini... This may take a moment.'):
             try:
-                api_key = st.secrets["HUGGINGFACE_API_KEY"]
-                # This is a non-gated model that works without pre-approval.
-                model_to_use = "microsoft/Phi-3-mini-4k-instruct"
-                analysis_result = call_huggingface_api(api_key, model_to_use, article_text)
+                # Retrieve the API key from Streamlit's secret management
+                api_key = st.secrets["GEMINI_API_KEY"]
+                analysis_result = call_gemini_api(api_key, article_text)
                 if analysis_result:
                     update_ui_with_results(analysis_result)
             except KeyError:
-                st.error("Hugging Face API key not found. Please add it to your Streamlit secrets.")
+                st.error("Google Gemini API key not found. Please add it to your Streamlit secrets.")
 
